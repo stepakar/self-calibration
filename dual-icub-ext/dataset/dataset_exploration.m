@@ -1,0 +1,103 @@
+C = load('C:\MATLAB\code-selfcalibration\dual-icub-ext\dataset\selfTouchConfigs.log');
+%INITIAL GUESS OF PARAMETERS
+    %PARAMETERS TO BE ESTIMATED:
+    %     DH parameters   = it's the parameter matrix. Each row has 4 DH parameters (a, d, alpha, offset), thus each
+    %            row completely describes a link. The more rows are added, the more links are attached.
+%SET JOINT ANGLES:
+%     Th   = it's the joint values vector (as read from the encoders)
+%FIXED PARAMETERS:
+%        H0   = is the roto-translation matrix in the origin of the chain (if the body part is attached
+%            to another one, typically the last reference frame of the previous body part goes here)
+%TODOS:
+% Pars, InitGuess and Joint values should be setted as global variables and
+% not saved and loaded
+addpath('../utils/');
+
+global Flags
+Flags.RIGHT_ARM_CHAIN_ON = true;
+Flags.LEFT_ARM_CHAIN_ON = true;
+Flags.HEAD_CHAIN_ON = true;
+Flags.LEFT_EYE_CHAIN_ON = true; % requires HEAD_CHAIN_ON == true;
+Flags.RIGHT_EYE_CHAIN_ON = true; % requires HEAD_CHAIN_ON == true;
+Flags.TORSO_CHAIN_ON = true;
+Flags.EEF_ERROR = true;%visualise error between the real eef position compared to aimed position of eef
+Flags.JOINT_DIST = false; %visualises distribution of joint values on individual joints
+global VIS_PAR
+VIS_PAR.f = 257;%focal length
+VIS_PAR.VAng = 60;%field of view
+VIS_PAR.RetS = VIS_PAR.VAng*pi()*VIS_PAR.f/360;%f*sqrt(3)/3;size of the retina
+%save('Setting.mat','VIS_PAR','RIGHT_EYE_CHAIN_ON','LEFT_EYE_CHAIN_ON','HEAD_CHAIN_ON','RIGHT_ARM_CHAIN_ON','LEFT_ARM_CHAIN_ON')
+C = load('C:\MATLAB\code-selfcalibration\dual-icub-ext\dataset\selfTouchConfigs.log');
+NmbPoints = [8000];
+
+for inp = 1
+    nmb_points = NmbPoints(inp);
+    %indices of poses from dataset to be selected
+    selected_poses = [1:nmb_points];%randi(size(C,1),nmb_points,1);
+    %measured poses
+    JV_torso = [C(selected_poses,4:6)];
+    %     ]; % pitch, roll, yaw order (iKin, CAD, DH) - unlike iCub motor interfaces
+    JV_LA = [C(selected_poses,7:13)];
+    JV_RA = [C(selected_poses,17:23)];
+    %converting from common pan and vergence to pan and tilt for individual
+    %eyes when loading data
+    JV_eyes = [C(selected_poses,24:27) C(selected_poses,28)+C(selected_poses,29)/2 C(selected_poses,28)-C(selected_poses,29)/2];
+
+    %robots parameters
+    estimated_robot_Init_pars = robots_config('realRobot');%robots_config('estimatedRobotInit');
+    Real_robot_pars = robots_config('realRobot');
+
+    %measured value for a given pose set (JV variables)
+    [LA_3D, RA_3D, Leye_2D, Reye_2D,RFFrameLA, RFFrameRA] = compute_points_3Dand2D(JV_torso,JV_LA,JV_RA,JV_eyes, Real_robot_pars,Flags,VIS_PAR);
+    
+    if Flags.JOINT_DIST
+        figure(3)
+            bins = 500;
+            subplot(3,1,1)
+                [Hh,X] = hist(C(selected_poses,4:13),bins);
+                h = plot(X,Hh)    
+                set(h, {'color'}, {[0.2 0.2 0.2];[0.5 0.5 0.5];[0.8 0.8 0.8];[1, 0, 0];[0, 0, 1];[0, 1, 0];[1, 1, 0];[0, 1, 1];[1, 0, 1];[0.5 0 0.5]});
+                legend('torso1','torso2','torso3','larm1','larm2','larm3','larm4','larm5','larm6','larm7','Orientation','horizontal')
+                title('larm joints distribution')
+                ylim([0 2000])
+            subplot(3,1,2)              
+                [Hh,X] = hist(C(selected_poses,14:23),bins);
+                h = plot(X,Hh)    ;
+                set(h, {'color'}, {[0.2 0.2 0.2];[0.5 0.5 0.5];[0.8 0.8 0.8];[1, 0, 0];[0, 0, 1];[0, 1, 0];[1, 1, 0];[0, 1, 1];[1, 0, 1];[0.5 0 0.5]});
+                legend('torso1','torso2','torso3','rarm1','rarm2','rarm3','rarm4','rarm5','rarm6','rarm7','Orientation','horizontal')
+                title('rarm joints distribution');
+                ylim([0 2000])
+            subplot(3,1,3)
+                [Hh,X] = hist(C(selected_poses,24:29),bins);                
+                h = plot(X,Hh)    
+                set(h, {'color'}, {[1, 0, 0];[0, 0, 1];[0, 1, 0];[1, 1, 0];[0, 1, 1];[1, 0, 1]});
+                legend('neck-pitch', 'neck-roll', 'neck-yaw', 'eyes-tilt', 'eyes-pan', 'eyes-vergence','Orientation','horizontal')
+                title('head and eyes joints distribution')
+                ylim([0 2000])
+
+    end
+    
+    %computing and visualising errors of end effector for right and left
+    %arm (real positions are compared to the aimed point)
+    if Flags.EEF_ERROR
+        figure(3)
+            subplot(2,1,1)
+            Results.error.LA.x = C(selected_poses,1)*1000-LA_3D(1,1:nmb_points)';
+            Results.error.LA.y = C(selected_poses,2)*1000-LA_3D(2,1:nmb_points)';
+            Results.error.LA.z = C(selected_poses,3)*1000-LA_3D(3,1:nmb_points)';
+            hist([Results.error.LA.x Results.error.LA.y Results.error.LA.z]);
+            legend('error_x','error_y','error_z','Location','northwest');
+            xlabel('Error [mm]')
+            title('Errors on LA')
+        subplot(2,1,2)         
+            Results.error.RA.x = C(selected_poses,1)*1000-RA_3D(1,1:nmb_points)';
+            Results.error.RA.y = C(selected_poses,2)*1000-RA_3D(2,1:nmb_points)';
+            Results.error.RA.z = C(selected_poses,3)*1000-RA_3D(3,1:nmb_points)';
+            hist([Results.error.RA.x Results.error.RA.y Results.error.RA.z]);
+            legend('error_x','error_y','error_z','Location','northwest');
+            xlabel('Error [mm]')
+            title('Errors on RA')
+        Results.error.LA.mse = sqrt(sum(((C(1:nmb_points,1:3)*1000-LA_3D(1:3,1:nmb_points)').^2),2));
+        Results.error.PA.mse = sqrt(sum(((C(1:nmb_points,1:3)*1000-RA_3D(1:3,1:nmb_points)').^2),2));
+    end
+end
